@@ -6,7 +6,7 @@ import tensorflow as tf
 import gym
 
 from Explorer import Explorer
-from memory import fill_memory, ReplayMemory
+from memory import fill_memory, ReplayMemory, Experience
 
 env = gym.make('CartPole-v1')
 PATH = 'models/cartpole.h5'
@@ -57,30 +57,23 @@ gamma = 0.9  # Discounting rate
 
 def learn(model, memory):
 
-    possible_actions = np.identity(env.action_space.n, dtype=int)
-
     batch = memory.sample(batch_size)
-    states_mb = np.array([each.state for each in batch])
-    actions_mb = np.array([possible_actions[each.action] for each in batch])
-    rewards_mb = np.array([each.reward for each in batch])
-    next_states_mb = np.array([each.next_state for each in batch])
-    dones_mb = np.array([each.done for each in batch])
+    states_mb = tf.convert_to_tensor(batch.state)
+    actions_mb = tf.one_hot(tf.convert_to_tensor(batch.action),env.action_space.n)
+    rewards_mb = tf.convert_to_tensor(batch.reward)
+    next_states_mb = tf.convert_to_tensor(batch.next_state)
+    dones_mb = tf.convert_to_tensor(batch.done)
 
-    target_qs_batch = []
-    qs_next_state = model.predict([next_states_mb, np.ones(actions_mb.shape)])
+    #TODO - predict only non final to save some time
+    qs_next_state = model.predict([next_states_mb,
+                                       tf.ones(actions_mb.shape)])
 
-    for i in range(0, len(batch)):
-        if dones_mb[i]:
-            target_qs_batch.append(rewards_mb[i])
-        else:
-            target = rewards_mb[i] + gamma * np.max(
-                qs_next_state[i])
-            target_qs_batch.append(target)
-
-    targets_mb = np.array(target_qs_batch)
+    target_qs_batch = tf.where(dones_mb,
+                                   rewards_mb,
+                                   rewards_mb + gamma * tf.reduce_max(qs_next_state,axis=1))
 
     history = model.fit([states_mb, actions_mb],
-                        actions_mb * targets_mb[:, None],
+                        actions_mb * target_qs_batch[:, None],
                         epochs=1, batch_size=len(batch), verbose=0)
     return history
 

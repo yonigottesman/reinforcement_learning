@@ -37,28 +37,24 @@ gamma = 0.9  # Discounting rate
 
 
 def learn(dqn, memory, criterion, optimizer):
-    n_actions = env.action_space.n
-    possible_actions = np.identity(env.action_space.n, dtype=int)
-
     batch = memory.sample(batch_size)
-    batch = Experience(*zip(*batch))
-    rewards_mb = torch.from_numpy(np.array(batch.reward)).float()
-    states_mb = torch.tensor(np.array(batch.state), requires_grad=True).float()
-    actions_mb = torch.tensor(np.array([possible_actions[i] for i in batch.action])).float()
 
-    next_states_mb = torch.from_numpy(np.array(batch.next_state)).float()
-    dones_mb = torch.from_numpy(np.array(batch.done)).float()
+    rewards = torch.tensor(batch.reward).float()
+    states = torch.tensor(np.array(batch.state)).float()
+    actions = torch.tensor(batch.action).view(-1, 1)
+    next_states = torch.tensor(batch.next_state).float()
+    dones = torch.tensor(batch.done).float()
 
     with torch.no_grad():
-        next_state_qs = dqn(next_states_mb)
+        next_state_qs = dqn(next_states[dones == False])
 
-    target_qs_batch = rewards_mb
-    target_qs_batch[dones_mb == False] += \
-        gamma * torch.max(next_state_qs[dones_mb == False], axis=1).values
+    q_expected = rewards
+    q_expected[dones == False] += \
+        gamma * torch.max(next_state_qs, dim=1).values
 
-    # get list of q values for state and chosen action
-    y_hat = torch.sum(torch.mul(dqn(states_mb), actions_mb), dim=1)
-    loss = criterion(y_hat, target_qs_batch)
+    # get q values only of played moves
+    q_predicted = dqn(states).gather(1, actions).squeeze()
+    loss = criterion(q_predicted, q_expected)
 
     optimizer.zero_grad()
     loss.backward()
@@ -68,10 +64,9 @@ def learn(dqn, memory, criterion, optimizer):
 
 
 def predict_action(dqn, explorer, state, n_actions):
-
     if explorer.explore():
         # exploration
-        action = random.randint(0, n_actions-1)
+        action = random.randint(0, n_actions - 1)
     else:
         # exploitation
         with torch.no_grad():
