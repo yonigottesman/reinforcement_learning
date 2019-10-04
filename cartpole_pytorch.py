@@ -1,3 +1,4 @@
+import os
 import random
 
 import numpy as np
@@ -10,6 +11,12 @@ from memory import ReplayMemory, fill_memory, Experience
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 env = gym.make('CartPole-v1')
+
+if not os.path.exists('models'):
+    os.makedirs('models')
+
+
+MODEL_PATH = 'models/cartpole.pt'
 
 
 class DQN(nn.Module):
@@ -87,7 +94,7 @@ def train():
     optimizer = torch.optim.Adam(dqn.parameters(), lr=lr)
 
     rewards_list = []
-    loss = 1
+
     for episode in range(5000):
         episode_rewards = 0
         state = env.reset()
@@ -115,12 +122,33 @@ def train():
                           'Training Loss {}'.format(loss),
                           'Moving average {}'.format(moving_average))
 
-        if episode % 10 == 0:
-            pass
+        if episode % 100 == 0:
+            torch.save(dqn.state_dict(), MODEL_PATH)
+
+def play():
+    dqn = DQN(state_shape=env.observation_space.shape[0],
+              n_actions=env.action_space.n)
+    dqn.load_state_dict(torch.load(MODEL_PATH))
+
+    for episode in range(5000):
+        state = env.reset()
+        done = False
+        episode_score = 0
+        while not done:
+            with torch.no_grad():
+                qs = dqn(torch.from_numpy(state).float())
+            action = torch.argmax(qs).item()
+            next_state, reward, done, _ = env.step(action)
+            episode_score += reward
+            env.render()
+            state = next_state
+        print('episode score {}'.format(episode_score))
+
 
 
 def main():
-    train()
+    # train()
+    play()
 
 
 if __name__ == '__main__':
