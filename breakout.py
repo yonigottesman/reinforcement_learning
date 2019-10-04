@@ -75,21 +75,21 @@ gamma = 0.99  # Discounting rate
 def learn(dqn, memory, criterion, optimizer):
     batch = memory.sample(batch_size)
 
-    rewards = torch.tensor(batch.reward).float()
-    states = torch.tensor(np.array(batch.state)).float()
-    actions = torch.tensor(batch.action).view(-1, 1)
-    next_states = torch.tensor(batch.next_state).float()
-    dones = torch.tensor(batch.done).float()
+    rewards = torch.tensor(batch.reward).float().to(device)
+    states = torch.tensor(np.array(batch.state)).float().to(device)
+    actions = torch.tensor(batch.action).view(-1, 1).to(device)
+    next_states = torch.tensor(batch.next_state).float().to(device)
+    dones = torch.tensor(batch.done).float().to(device)
 
     with torch.no_grad():
-        next_state_qs = dqn(next_states[dones == False])
+        next_state_qs = dqn(next_states[dones == False]).to(device)
 
     q_expected = rewards
     q_expected[dones == False] += \
         gamma * torch.max(next_state_qs, dim=1).values
 
     # get q values only of played moves
-    q_predicted = dqn(states).gather(1, actions).squeeze()
+    q_predicted = dqn(states).gather(1, actions).squeeze().to(device)
     loss = criterion(q_predicted, q_expected)
 
     optimizer.zero_grad()
