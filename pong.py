@@ -118,7 +118,7 @@ def predict_action(dqn, explorer, state, n_actions):
     else:
         # exploitation
         with torch.no_grad():
-            qs = dqn(state).to(device)
+            qs = dqn(state.to(device))
         action = torch.argmax(qs).item()
 
     return action, explore_prob
