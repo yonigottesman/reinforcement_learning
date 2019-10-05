@@ -1,6 +1,7 @@
 from collections import deque
 
 import numpy as np
+import torch
 
 
 class StackedFrames:
@@ -14,5 +15,6 @@ class StackedFrames:
             self.stacked_frames = deque([frame for i in range(4)], self.stack_size)
         else:
             self.stacked_frames.append(frame)
-        return np.stack(self.stacked_frames, axis=2)
+        return torch.tensor(self.stacked_frames).unsqueeze(0)
+
 

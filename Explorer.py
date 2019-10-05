@@ -26,9 +26,9 @@ class Explorer():
 
 
 if __name__ == '__main__':
-    steps = range(10000000)
+    steps = range(1000000)
     exploration = []
-    explorer = Explorer(1, 0.1, 0.00001)
+    explorer = Explorer(1, 0.01, 0.000001)
     for i in steps:
         exploration.append(explorer.explore_prob())
         explorer.explore()
