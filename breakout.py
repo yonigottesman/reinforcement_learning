@@ -15,14 +15,14 @@ from skimage import transform
 import matplotlib.pyplot as plt
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-env = gym.make('Breakout-v0')
+env = gym.make('BreakoutDeterministic-v4')
 
 if not os.path.exists('models'):
     os.makedirs('models')
 
 
 MODEL_PATH = 'models/breakout.pt'
-PROCESSED_FRAME_SIZE = [110, 84]
+PROCESSED_FRAME_SIZE = [84, 84]
 
 
 class DQN(nn.Module):
@@ -75,11 +75,11 @@ gamma = 0.99  # Discounting rate
 def learn(dqn, memory, criterion, optimizer):
     batch = memory.sample(batch_size)
 
-    rewards = torch.tensor(batch.reward).float().to(device)
-    states = torch.tensor(np.array(batch.state)).float().to(device)
-    actions = torch.tensor(batch.action).view(-1, 1).to(device)
-    next_states = torch.tensor(batch.next_state).float().to(device)
-    dones = torch.tensor(batch.done).float().to(device)
+    rewards = torch.FloatTensor(batch.reward).to(device)
+    states = torch.FloatTensor(batch.state).to(device)
+    actions = torch.LongTensor(batch.action).view(-1, 1).to(device)
+    next_states = torch.FloatTensor(batch.next_state).to(device)
+    dones = torch.FloatTensor(batch.done).to(device)
 
     with torch.no_grad():
         next_state_qs = dqn(next_states[dones == False]).to(device)
@@ -100,13 +100,13 @@ def learn(dqn, memory, criterion, optimizer):
 
 
 def predict_action(dqn, explorer, state, n_actions):
-    if explorer.explore():
+    if explorer is not None and explorer.explore():
         # exploration
         action = random.randint(0, n_actions - 1)
     else:
         # exploitation
         with torch.no_grad():
-            qs = dqn(torch.tensor(state).unsqueeze(0).float())
+            qs = dqn(torch.FloatTensor(state).unsqueeze(0).to(device))
         action = torch.argmax(qs).item()
 
     return action, explorer.explore_prob()
@@ -141,6 +141,7 @@ def train():
 
     criterion = torch.nn.MSELoss().to(device)
     optimizer = torch.optim.Adam(dqn.parameters(), lr=lr)
+
     frame_stack = StackedFrames(4, PROCESSED_FRAME_SIZE)
     rewards_list = []
     total_steps = 0
@@ -181,7 +182,7 @@ def play():
     dqn = DQN(state_shape=PROCESSED_FRAME_SIZE,
               n_actions=env.action_space.n)
     explorer = PaperExplorer()
-    #dqn.load_state_dict(torch.load(MODEL_PATH))
+    dqn.load_state_dict(torch.load(MODEL_PATH))
     frame_stack = StackedFrames(4, PROCESSED_FRAME_SIZE)
 
     for episode in range(5000):
