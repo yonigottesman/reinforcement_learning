@@ -1,5 +1,6 @@
 import os
 import random
+import time
 
 import numpy as np
 import torch.nn as nn
@@ -44,16 +45,21 @@ class DQN(nn.Module):
 
         torch.nn.init.xavier_uniform_(self.fc1.weight)
         torch.nn.init.xavier_uniform_(self.fc2.weight)
+
     @staticmethod
     def conv_size_out(input_size, kernel_size, stride, padding=0):
-        return (input_size + 2*padding- kernel_size)//stride + 1
+        return (input_size + 2*padding - kernel_size)//stride + 1
+
+    @staticmethod
+    def flatten(x):
+        return x.view(x.size(0), -1)
 
     def forward(self, state):
 
         normalized = state.float() / 255
         a2 = F.relu(self.conv1(normalized))
         a3 = F.relu(self.conv2(a2))
-        a4 = F.relu(self.fc1(a3.view(a3.size(0), -1)))
+        a4 = F.relu(self.fc1(DQN.flatten(a3)))
         output = self.fc2(a4)
 
         return output
@@ -201,7 +207,7 @@ def play():
     dqn = DQN(state_shape=PROCESSED_FRAME_SIZE,
               n_actions=env.action_space.n)
 
-    dqn.load_state_dict(torch.load(MODEL_PATH))
+    dqn.load_state_dict(torch.load(MODEL_PATH,  map_location=torch.device('cpu')))
     frame_stack = StackedFrames(4, PROCESSED_FRAME_SIZE)
 
     for episode in range(5000):
@@ -210,6 +216,7 @@ def play():
         done = False
         episode_score = 0
         while not done:
+            time.sleep(0.03)
             action, explore_probability = predict_action(dqn,
                                                          None,
                                                          state,

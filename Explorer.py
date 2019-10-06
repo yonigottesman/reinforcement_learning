@@ -22,13 +22,13 @@ class Explorer():
         explore_probability = self.explore_rate_stop + (
                 self.explore_rate_start - self.explore_rate_stop) * np.exp(
             -self.decay * self.decay_step)
-        return explore_probability
+        return max(self.explore_rate_stop, explore_probability)
 
 
 if __name__ == '__main__':
     steps = range(1000000)
     exploration = []
-    explorer = Explorer(1, 0.01, 0.000001)
+    explorer = Explorer(1, 0.02, 1e-05)
     for i in steps:
         exploration.append(explorer.explore_prob())
         explorer.explore()
