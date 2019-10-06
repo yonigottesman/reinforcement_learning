@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from Explorer import Explorer
 from PaperExplorer import PaperExplorer
 from StackedFrames import StackedFrames
-from gym_wrappers import NoopResetEnv
+import gym_wrappers
 from memory import ReplayMemory, fill_memory
 from skimage import transform
 from datetime import datetime
@@ -20,8 +20,13 @@ import matplotlib.pyplot as plt
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print('device: {}'.format(device))
 
-env = gym.make('Pong-v0')
-env = NoopResetEnv(env)
+env = gym.make('PongNoFrameskip-v4')
+env = gym_wrappers.MaxAndSkipEnv(env)
+env = gym_wrappers.NoopResetEnv(env)
+
+env = gym_wrappers.EpisodicLifeEnv(env)
+env = gym_wrappers.FireResetEnv(env)
+
 
 if not os.path.exists('models'):
     os.makedirs('models')
@@ -160,7 +165,7 @@ def train():
     memory = ReplayMemory(memory_size)
     fill_memory(memory)
     print('finished filling memory')
-    explorer = PaperExplorer()
+    explorer = PaperExplorer(1, 0.02, 100000)
     dqn = DQN(state_shape=PROCESSED_FRAME_SIZE,
               n_actions=env.action_space.n).to(device)
     target_dqn = DQN(state_shape=PROCESSED_FRAME_SIZE,
