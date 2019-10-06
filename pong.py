@@ -8,6 +8,7 @@ import torch
 import gym
 import torch.nn.functional as F
 
+from Explorer import Explorer
 from PaperExplorer import PaperExplorer
 from StackedFrames import StackedFrames
 from memory import ReplayMemory, fill_memory
@@ -16,7 +17,7 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-env = gym.make('PongDeterministic-v4')
+env = gym.make('Pong-v0')
 
 if not os.path.exists('models'):
     os.makedirs('models')
@@ -75,14 +76,14 @@ def process_frame(frame):
 
 
 # training hyperparams
-memory_size = 100000
+memory_size = 50000
 prefill_memory = 10000
 batch_size = 32
-lr = 0.00025
+lr = 1e-4
 gamma = 0.99  # Discounting rate
 
 
-def learn(dqn, memory, criterion, optimizer):  # 578499[msec]
+def learn(dqn, memory, criterion, optimizer):
     a = datetime.now()
 
     batch = memory.sample(batch_size)
@@ -116,18 +117,16 @@ def learn(dqn, memory, criterion, optimizer):  # 578499[msec]
 
 
 def predict_action(dqn, explorer, state, n_actions):
-    explore_prob = 0
-    if explorer is not None and explorer.explore():
+    if explorer.explore():
         # exploration
         action = random.randint(0, n_actions - 1)
-        explore_prob = explorer.explore_prob()
     else:
         # exploitation
         with torch.no_grad():
             qs = dqn(state.to(device))
         action = torch.argmax(qs).item()
 
-    return action, explore_prob
+    return action, explorer.explore_prob()
 
 
 def fill_memory(memory):
@@ -153,7 +152,7 @@ def train():
     memory = ReplayMemory(memory_size)
     fill_memory(memory)
     print('finished filling memory')
-    explorer = PaperExplorer()
+    explorer = Explorer(1, 0.02, 1e-05)
     dqn = DQN(state_shape=PROCESSED_FRAME_SIZE, n_actions=env.action_space.n)\
         .to(device)
 
@@ -168,20 +167,18 @@ def train():
         state = env.reset()
         state = frame_stack.push_get(process_frame(state), True)
         done = False
-        while not done:  # whole loop ~600000[msec] == 0.6[sec]
+        while not done:
             a = datetime.now()
             total_steps += 1
             action, explore_probability = predict_action(dqn,
                                                          explorer,
                                                          state,
-                                                         env.action_space.n)  # 31[msec]
+                                                         env.action_space.n)
 
-
-            next_state, reward, done, _ = env.step(action)  # 2 lines: 3600[msec]
+            next_state, reward, done, _ = env.step(action)
             next_state = frame_stack.push_get(process_frame(next_state))
 
-
-            # env.render()
+            env.render()
             episode_rewards += reward
             memory.push(state, action, reward, next_state, done)
             state = next_state
@@ -207,18 +204,18 @@ def play():
     dqn = DQN(state_shape=PROCESSED_FRAME_SIZE,
               n_actions=env.action_space.n)
 
-    dqn.load_state_dict(torch.load(MODEL_PATH,  map_location=torch.device('cpu')))
+    dqn.load_state_dict(torch.load('models/pong.pt',  map_location=torch.device('cpu')))
     frame_stack = StackedFrames(4, PROCESSED_FRAME_SIZE)
-
+    explorer = Explorer(0, 0, 0)
     for episode in range(5000):
         state = env.reset()
         state = frame_stack.push_get(process_frame(state), True)
         done = False
         episode_score = 0
         while not done:
-            time.sleep(0.03)
+            time.sleep(0.02)
             action, explore_probability = predict_action(dqn,
-                                                         None,
+                                                         explorer,
                                                          state,
                                                          env.action_space.n)
             next_state, reward, done, _ = env.step(action)
@@ -240,8 +237,8 @@ def display_processd_frame():
 
 
 def main():
-    train()
-    #play()
+    #train()
+    play()
     #display_processd_frame()
 
 
