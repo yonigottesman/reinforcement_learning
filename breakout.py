@@ -93,9 +93,11 @@ def process_frame(frame):
 memory_size = 50000
 prefill_memory = 10000
 batch_size = 32
-lr = 0.0001
+lr = 0.00001
 gamma = 0.99  # Discounting rate
 target_net_update_freq = 1000
+episodes_train = 1000000
+
 
 def learn(dqn, target_dqn, memory, criterion, optimizer):
     a = datetime.now()
@@ -109,11 +111,15 @@ def learn(dqn, target_dqn, memory, criterion, optimizer):
     dones = torch.tensor(batch.done).to(device)
 
     with torch.no_grad():
-        next_state_qs = target_dqn(next_states[dones == False]).to(device)
+        # double dqn: to get q_values of next_state, get the actions from
+        # dqn and use to get qvalues for those actions using target_dqn
+        # calculate next actions:
+        next_state_actions = dqn(next_states[dones == False]).argmax(dim=1)
+        #calculate qvalues using target_dqn
+        next_state_qs = target_dqn(next_states[dones == False]).gather(1, next_state_actions.unsqueeze(1)).squeeze().to(device)
 
     q_expected = rewards
-    q_expected[dones == False] += \
-        gamma * torch.max(next_state_qs, dim=1).values
+    q_expected[dones == False] += gamma * next_state_qs
 
     # get q values only of played moves
     q_predicted = dqn(states).gather(1, actions).squeeze().to(device)
@@ -178,7 +184,7 @@ def train():
     frame_stack = StackedFrames(4, PROCESSED_FRAME_SIZE)
     rewards_list = []
     total_steps = 0
-    for episode in range(5000):
+    for episode in range(episodes_train):
         episode_rewards = 0
         state = env.reset()
         state = frame_stack.push_get(process_frame(state), True)
@@ -226,7 +232,7 @@ def play():
     dqn.load_state_dict(torch.load('models/breakout.pt',  map_location=torch.device('cpu')))
     frame_stack = StackedFrames(4, PROCESSED_FRAME_SIZE)
     explorer = Explorer(0, 0, 0)
-    for episode in range(5000):
+    for episode in range(500000):
         state = env.reset()
         state = frame_stack.push_get(process_frame(state), True)
         done = False
