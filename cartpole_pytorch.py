@@ -128,7 +128,7 @@ def train():
 def play():
     dqn = DQN(state_shape=env.observation_space.shape[0],
               n_actions=env.action_space.n)
-    dqn.load_state_dict(torch.load(MODEL_PATH))
+    #dqn.load_state_dict(torch.load(MODEL_PATH))
 
     for episode in range(5000):
         state = env.reset()
@@ -147,8 +147,8 @@ def play():
 
 
 def main():
-    # train()
-    play()
+    train()
+    #play()
 
 
 if __name__ == '__main__':

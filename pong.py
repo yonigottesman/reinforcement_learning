@@ -9,16 +9,21 @@ import gym
 import torch.nn.functional as F
 
 from Explorer import Explorer
-from PaperExplorer import PaperExplorer
+from LinearExplorer import LinearExplorer
 from StackedFrames import StackedFrames
 from memory import ReplayMemory, fill_memory
 from skimage import transform
 from datetime import datetime
 import matplotlib.pyplot as plt
+from gym_wrappers import NoopResetEnv
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-env = gym.make('Pong-v0')
-
+#env = gym.make('Pong-v0')
+#env = gym.make('Pong-v4')
+env = gym.make('PongDeterministic-v4')
+env = NoopResetEnv(env)
+#env.unwrapped.get_action_meanings()
 if not os.path.exists('models'):
     os.makedirs('models')
 
@@ -77,7 +82,7 @@ def process_frame(frame):
 
 # training hyperparams
 memory_size = 50000
-prefill_memory = 10000
+prefill_memory = 50000
 batch_size = 32
 lr = 1e-4
 gamma = 0.99  # Discounting rate
@@ -92,8 +97,8 @@ def learn(dqn, memory, criterion, optimizer):
     states = torch.cat(batch.state).to(device)
     actions = torch.tensor(batch.action).view(-1, 1).to(device)
     next_states = torch.cat(batch.next_state).to(device)
-    b = datetime.now()
-    delta = b - a
+
+
     dones = torch.tensor(batch.done).to(device)
 
     with torch.no_grad():
@@ -105,14 +110,16 @@ def learn(dqn, memory, criterion, optimizer):
 
     # get q values only of played moves
     q_predicted = dqn(states).gather(1, actions).squeeze().to(device)
+
     loss = criterion(q_predicted, q_expected)
 
     optimizer.zero_grad()
     loss.backward()
-
+    b = datetime.now()
     optimizer.step()
 
-    #print(delta.total_seconds()*1000000) # total milisec
+    delta = b - a
+    print(delta.total_seconds()*1000) # total milisec
     return loss
 
 
@@ -137,6 +144,8 @@ def fill_memory(memory):
 
     # same number as paper
     for i in range(prefill_memory):
+        if i % 1000 == 0:
+            print(i)
         action = random.randint(0, env.action_space.n - 1)
         next_state, reward, done, _ = env.step(action)
         next_state = frame_stack.push_get(process_frame(next_state))
@@ -167,7 +176,7 @@ def train():
         state = env.reset()
         state = frame_stack.push_get(process_frame(state), True)
         done = False
-        while not done:
+        while not done: # 34829[msec]
             a = datetime.now()
             total_steps += 1
             action, explore_probability = predict_action(dqn,
@@ -178,7 +187,7 @@ def train():
             next_state, reward, done, _ = env.step(action)
             next_state = frame_stack.push_get(process_frame(next_state))
 
-            env.render()
+            #env.render()
             episode_rewards += reward
             memory.push(state, action, reward, next_state, done)
             state = next_state
@@ -204,7 +213,7 @@ def play():
     dqn = DQN(state_shape=PROCESSED_FRAME_SIZE,
               n_actions=env.action_space.n)
 
-    dqn.load_state_dict(torch.load('models/pong.pt',  map_location=torch.device('cpu')))
+    dqn.load_state_dict(torch.load('models/pong_working.pt',  map_location=torch.device('cpu')))
     frame_stack = StackedFrames(4, PROCESSED_FRAME_SIZE)
     explorer = Explorer(0, 0, 0)
     for episode in range(5000):
@@ -213,7 +222,7 @@ def play():
         done = False
         episode_score = 0
         while not done:
-            time.sleep(0.02)
+            time.sleep(0.01)
             action, explore_probability = predict_action(dqn,
                                                          explorer,
                                                          state,
@@ -236,11 +245,19 @@ def display_processd_frame():
     plt.show()
 
 
+def test_memory_size():
+    memory = ReplayMemory(memory_size)
+    fill_memory(memory)
+    print('finished filling memory')
+    while True:
+        time.sleep(0.2)
+
+
 def main():
     #train()
     play()
     #display_processd_frame()
-
+    #test_memory_size()
 
 if __name__ == '__main__':
     main()

@@ -9,7 +9,7 @@ import gym
 import torch.nn.functional as F
 
 from Explorer import Explorer
-from PaperExplorer import PaperExplorer
+from LinearExplorer import LinearExplorer
 from StackedFrames import StackedFrames
 import gym_wrappers
 from memory import ReplayMemory, fill_memory
@@ -26,6 +26,7 @@ env = gym_wrappers.NoopResetEnv(env)
 
 env = gym_wrappers.EpisodicLifeEnv(env)
 env = gym_wrappers.FireResetEnv(env)
+env = gym_wrappers.ClipRewardEnv(env)
 
 
 if not os.path.exists('models'):
@@ -92,7 +93,7 @@ def process_frame(frame):
 memory_size = 50000
 prefill_memory = 10000
 batch_size = 32
-lr = 0.00025
+lr = 0.0001
 gamma = 0.99  # Discounting rate
 target_net_update_freq = 1000
 
@@ -165,7 +166,7 @@ def train():
     memory = ReplayMemory(memory_size)
     fill_memory(memory)
     print('finished filling memory')
-    explorer = PaperExplorer(1, 0.02, 100000)
+    explorer = LinearExplorer(1, 0.05, 500000)
     dqn = DQN(state_shape=PROCESSED_FRAME_SIZE,
               n_actions=env.action_space.n).to(device)
     target_dqn = DQN(state_shape=PROCESSED_FRAME_SIZE,

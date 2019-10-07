@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-class PaperExplorer():
+class LinearExplorer():
     def __init__(self, start=1, end=0.1, steps=1000000):
         self.step = 0
         self.end = end
@@ -9,7 +9,6 @@ class PaperExplorer():
         self.steps = steps
         self.m = (self.end - self.start) / (steps)
         self.b = 1
-
 
     def explore(self):
 
@@ -31,7 +30,7 @@ if __name__ == '__main__':
     steps = range(1000000)
     exploration = []
     #explorer = PaperExplorer()
-    explorer = PaperExplorer(1, 0.02, 100000)
+    explorer = LinearExplorer(1, 0.1, 500000)
     for i in steps:
         exploration.append(explorer.explore_prob())
         explorer.explore()

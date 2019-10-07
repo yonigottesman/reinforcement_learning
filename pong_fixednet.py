@@ -9,7 +9,7 @@ import gym
 import torch.nn.functional as F
 
 from Explorer import Explorer
-from PaperExplorer import PaperExplorer
+from LinearExplorer import LinearExplorer
 from StackedFrames import StackedFrames
 import gym_wrappers
 from memory import ReplayMemory, fill_memory
@@ -165,7 +165,7 @@ def train():
     memory = ReplayMemory(memory_size)
     fill_memory(memory)
     print('finished filling memory')
-    explorer = PaperExplorer(1, 0.02, 100000)
+    explorer = LinearExplorer(1, 0.02, 100000)
     dqn = DQN(state_shape=PROCESSED_FRAME_SIZE,
               n_actions=env.action_space.n).to(device)
     target_dqn = DQN(state_shape=PROCESSED_FRAME_SIZE,
@@ -219,10 +219,11 @@ def train():
 
 
 def play():
+    #env = gym.make('Pong-v0')
     dqn = DQN(state_shape=PROCESSED_FRAME_SIZE,
               n_actions=env.action_space.n)
 
-    dqn.load_state_dict(torch.load('models/pong_working.pt',  map_location=torch.device('cpu')))
+    dqn.load_state_dict(torch.load('models/pong.pt',  map_location=torch.device('cpu')))
     frame_stack = StackedFrames(4, PROCESSED_FRAME_SIZE)
     explorer = Explorer(0, 0, 0)
     for episode in range(5000):
@@ -263,8 +264,8 @@ def test_memory_size():
 
 
 def main():
-    train()
-    # play()
+    #train()
+    play()
     #display_processd_frame()
     #test_memory_size()
 

@@ -26,13 +26,14 @@ class Explorer():
 
 
 if __name__ == '__main__':
-    steps = range(1000000)
+    steps = range(100000)
     exploration = []
-    explorer = Explorer(1, 0.02, 1e-05)
+    #explorer = Explorer(1, 0.01, 3e-05)
+    explorer = Explorer(0.25, 0.25, 0)
     for i in steps:
         exploration.append(explorer.explore_prob())
         explorer.explore()
     fig, ax = plt.subplots(1, 1)
     ax.plot(steps, exploration)
-    ax.set_xscale('log')
+    #ax.set_xscale('log')
     plt.show()
