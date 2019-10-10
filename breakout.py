@@ -262,9 +262,9 @@ def display_processd_frame():
 
 
 def main():
-    #train()
-    play()
-    #display_processd_frame()
+    train()
+    # play()
+    # display_processd_frame()
 
 
 if __name__ == '__main__':
