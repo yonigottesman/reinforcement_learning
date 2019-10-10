@@ -90,10 +90,10 @@ def process_frame(frame):
 
 
 # training hyperparams
-memory_size = 50000
-prefill_memory = 10000
+memory_size = 1000000
+prefill_memory = 50000
 batch_size = 32
-lr = 0.00001
+lr = 0.00025
 gamma = 0.99  # Discounting rate
 target_net_update_freq = 1000
 episodes_train = 1000000
@@ -115,7 +115,7 @@ def learn(dqn, target_dqn, memory, criterion, optimizer):
         # dqn and use to get qvalues for those actions using target_dqn
         # calculate next actions:
         next_state_actions = dqn(next_states[dones == False]).argmax(dim=1)
-        #calculate qvalues using target_dqn
+        # calculate qvalues using target_dqn
         next_state_qs = target_dqn(next_states[dones == False]).gather(1, next_state_actions.unsqueeze(1)).squeeze().to(device)
 
     q_expected = rewards
@@ -172,7 +172,7 @@ def train():
     memory = ReplayMemory(memory_size)
     fill_memory(memory)
     print('finished filling memory')
-    explorer = LinearExplorer(1, 0.05, 500000)
+    explorer = LinearExplorer(1, 0.1, 1000000)
     dqn = DQN(state_shape=PROCESSED_FRAME_SIZE,
               n_actions=env.action_space.n).to(device)
     target_dqn = DQN(state_shape=PROCESSED_FRAME_SIZE,
@@ -261,19 +261,11 @@ def display_processd_frame():
     plt.show()
 
 
-def test_memory_size():
-    memory = ReplayMemory(memory_size)
-    fill_memory(memory)
-    print('finished filling memory')
-    while True:
-        time.sleep(0.2)
-
-
 def main():
-    train()
-    #play()
+    #train()
+    play()
     #display_processd_frame()
-    #test_memory_size()
+
 
 if __name__ == '__main__':
     main()
