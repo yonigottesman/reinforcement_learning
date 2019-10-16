@@ -28,7 +28,6 @@ env = gym_wrappers.EpisodicLifeEnv(env)
 env = gym_wrappers.FireResetEnv(env)
 env = gym_wrappers.ClipRewardEnv(env)
 
-
 if not os.path.exists('models'):
     os.makedirs('models')
 
@@ -45,39 +44,60 @@ class DQN(nn.Module):
         self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
         self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=2)
 
-        flatten_size = DQN.conv_size_out(np.array(state_shape), 8, 4)
-        flatten_size = DQN.conv_size_out(flatten_size, 4, 2)
-        flatten_size = DQN.conv_size_out(flatten_size, 3, 2)
-        flatten_size = flatten_size.prod()*64  # n output channels
+        flatten_size = self.calc_flatten_size(state_shape)
 
-        self.fc1 = nn.Linear(flatten_size, 512)
-        self.fc2 = nn.Linear(512, n_actions)
+        # Dueling network
+        self.v_fc = nn.Linear(flatten_size, 512)
+        self.v_stream = nn.Linear(512, 1)
 
+        self.advantage_fc = nn.Linear(flatten_size, 512)
+        self.advantage_stream = nn.Linear(512, n_actions)
+
+        self.init_layers()
+
+    def init_layers(self):
         torch.nn.init.xavier_uniform_(self.conv1.weight)
         torch.nn.init.xavier_uniform_(self.conv2.weight)
         torch.nn.init.xavier_uniform_(self.conv3.weight)
 
-        torch.nn.init.xavier_uniform_(self.fc1.weight)
-        torch.nn.init.xavier_uniform_(self.fc2.weight)
+        torch.nn.init.xavier_uniform_(self.v_fc.weight)
+        torch.nn.init.xavier_uniform_(self.v_stream.weight)
+        torch.nn.init.xavier_uniform_(self.advantage_fc.weight)
+        torch.nn.init.xavier_uniform_(self.advantage_stream.weight)
+
+    def calc_flatten_size(self, state_shape):
+        flatten_size = DQN.conv_size_out(np.array(state_shape), self.conv1.kernel_size, self.conv1.stride)
+        flatten_size = DQN.conv_size_out(flatten_size, self.conv2.kernel_size, self.conv2.stride)
+        flatten_size = DQN.conv_size_out(flatten_size, self.conv3.kernel_size, self.conv3.stride)
+        flatten_size = flatten_size.prod() * self.conv3.out_channels
+        return flatten_size
 
     @staticmethod
     def conv_size_out(input_size, kernel_size, stride, padding=0):
-        return (input_size + 2*padding - kernel_size)//stride + 1
+        return (input_size + 2 * padding - kernel_size) // stride + 1
 
     @staticmethod
     def flatten(x):
         return x.view(x.size(0), -1)
 
     def forward(self, state):
-
         normalized = state.float() / 255
         a2 = F.relu(self.conv1(normalized))
         a3 = F.relu(self.conv2(a2))
         a4 = F.relu(self.conv3(a3))
-        a5 = F.relu(self.fc1(DQN.flatten(a4)))
-        output = self.fc2(a5)
 
-        return output
+        a4_flat = DQN.flatten(a4)
+
+        # Dueling
+        a5_v = F.relu(self.v_fc(a4_flat))
+        value = self.v_stream(a5_v)
+
+        a5_a = F.relu(self.advantage_fc(a4_flat))
+        advantage = self.advantage_stream(a5_a)
+
+        q = value + (advantage - advantage.mean(dim=1, keepdim=True))
+
+        return q
 
 
 def process_frame(frame):
@@ -93,7 +113,7 @@ def process_frame(frame):
 memory_size = 1000000
 prefill_memory = 50000
 batch_size = 32
-lr = 0.00025
+lr = 0.00001
 gamma = 0.99  # Discounting rate
 target_net_update_freq = 1000
 episodes_train = 1000000
@@ -116,7 +136,8 @@ def learn(dqn, target_dqn, memory, criterion, optimizer):
         # calculate next actions:
         next_state_actions = dqn(next_states[dones == False]).argmax(dim=1)
         # calculate qvalues using target_dqn
-        next_state_qs = target_dqn(next_states[dones == False]).gather(1, next_state_actions.unsqueeze(1)).squeeze().to(device)
+        next_state_qs = target_dqn(next_states[dones == False]).gather(1, next_state_actions.unsqueeze(1)).squeeze().to(
+            device)
 
     q_expected = rewards
     q_expected[dones == False] += gamma * next_state_qs
@@ -132,7 +153,7 @@ def learn(dqn, target_dqn, memory, criterion, optimizer):
     optimizer.step()
 
     delta = b - a
-    #print(delta.total_seconds()*1000) # total milisec
+    # print(delta.total_seconds()*1000) # total milisec
     return loss
 
 
@@ -184,14 +205,19 @@ def train():
     frame_stack = StackedFrames(4, PROCESSED_FRAME_SIZE)
     rewards_list = []
     total_steps = 0
+
+    ts_frame = 0
+    ts = time.time()
+
     for episode in range(episodes_train):
         episode_rewards = 0
         state = env.reset()
         state = frame_stack.push_get(process_frame(state), True)
         done = False
         while not done:
-            a = datetime.now()
+
             total_steps += 1
+
             action, explore_probability = predict_action(dqn,
                                                          explorer,
                                                          state,
@@ -200,23 +226,27 @@ def train():
             next_state, reward, done, _ = env.step(action)
             next_state = frame_stack.push_get(process_frame(next_state))
 
-            #env.render()
+            # env.render()
             episode_rewards += reward
             memory.push(state, action, reward, next_state, done)
             state = next_state
 
             loss = learn(dqn, target_dqn, memory, criterion, optimizer)
-            b = datetime.now()
-            delta = b - a
-            #print(delta.total_seconds()*1000000) # total milisec
+
             if done:
+
+                speed = (total_steps - ts_frame) / (time.time() - ts)
+                ts_frame = total_steps
+                ts = time.time()
+
                 rewards_list.append(episode_rewards)
 
                 print('Episode: {}'.format(episode),
                       'Total reward: {}'.format(episode_rewards),
                       'Explore P: {:.4f}'.format(explore_probability),
                       'Training Loss {}'.format(loss),
-                      'total steps {}'.format(total_steps))
+                      'total steps {}'.format(total_steps),
+                      'speed {} frames/sec'.format(speed))
 
             if total_steps % target_net_update_freq == 0:
                 target_dqn.load_state_dict(dqn.state_dict())
@@ -229,7 +259,7 @@ def play():
     dqn = DQN(state_shape=PROCESSED_FRAME_SIZE,
               n_actions=env.action_space.n)
 
-    dqn.load_state_dict(torch.load('models/breakout.pt',  map_location=torch.device('cpu')))
+    dqn.load_state_dict(torch.load('models/breakout_working.pt', map_location=torch.device('cpu')))
     frame_stack = StackedFrames(4, PROCESSED_FRAME_SIZE)
     explorer = Explorer(0, 0, 0)
     for episode in range(500000):
@@ -238,7 +268,7 @@ def play():
         done = False
         episode_score = 0
         while not done:
-            time.sleep(0.01)
+            time.sleep(0.04)
             action, explore_probability = predict_action(dqn,
                                                          explorer,
                                                          state,
