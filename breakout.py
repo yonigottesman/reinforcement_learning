@@ -14,7 +14,6 @@ from StackedFrames import StackedFrames
 import gym_wrappers
 from memory import ReplayMemory, fill_memory
 from skimage import transform
-from datetime import datetime
 import matplotlib.pyplot as plt
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -115,12 +114,12 @@ prefill_memory = 50000
 batch_size = 32
 lr = 0.00001
 gamma = 0.99  # Discounting rate
-target_net_update_freq = 1000
+target_net_update_freq = 10000
 episodes_train = 1000000
+update_frequency = 4
 
 
 def learn(dqn, target_dqn, memory, criterion, optimizer):
-    a = datetime.now()
 
     batch = memory.sample(batch_size)
 
@@ -149,16 +148,13 @@ def learn(dqn, target_dqn, memory, criterion, optimizer):
 
     optimizer.zero_grad()
     loss.backward()
-    b = datetime.now()
-    optimizer.step()
 
-    delta = b - a
-    # print(delta.total_seconds()*1000) # total milisec
+    optimizer.step()
     return loss
 
 
-def predict_action(dqn, explorer, state, n_actions):
-    if explorer.explore():
+def predict_action(dqn, explorer, state, n_actions, steps):
+    if explorer.should_explore(steps):
         # exploration
         action = random.randint(0, n_actions - 1)
     else:
@@ -167,7 +163,7 @@ def predict_action(dqn, explorer, state, n_actions):
             qs = dqn(state.to(device))
         action = torch.argmax(qs).item()
 
-    return action, explorer.explore_prob()
+    return action, explorer.explore_prob(steps)
 
 
 def fill_memory(memory):
@@ -176,7 +172,6 @@ def fill_memory(memory):
     state = env.reset()
     state = frame_stack.push_get(process_frame(state), True)
 
-    # same number as paper
     for i in range(prefill_memory):
         action = random.randint(0, env.action_space.n - 1)
         next_state, reward, done, _ = env.step(action)
@@ -193,13 +188,13 @@ def train():
     memory = ReplayMemory(memory_size)
     fill_memory(memory)
     print('finished filling memory')
-    explorer = LinearExplorer(1, 0.1, 1000000)
+    explorer = LinearExplorer(1, 0.1, 1000000, 0.01, 24000000)
     dqn = DQN(state_shape=PROCESSED_FRAME_SIZE,
               n_actions=env.action_space.n).to(device)
     target_dqn = DQN(state_shape=PROCESSED_FRAME_SIZE,
                      n_actions=env.action_space.n).to(device)
 
-    criterion = torch.nn.MSELoss().to(device)
+    criterion = torch.nn.SmoothL1Loss().to(device)
     optimizer = torch.optim.Adam(dqn.parameters(), lr=lr)
 
     frame_stack = StackedFrames(4, PROCESSED_FRAME_SIZE)
@@ -210,18 +205,19 @@ def train():
     ts = time.time()
 
     for episode in range(episodes_train):
+
         episode_rewards = 0
+        losses = []
         state = env.reset()
         state = frame_stack.push_get(process_frame(state), True)
         done = False
+
         while not done:
-
-            total_steps += 1
-
             action, explore_probability = predict_action(dqn,
                                                          explorer,
                                                          state,
-                                                         env.action_space.n)
+                                                         env.action_space.n,
+                                                         total_steps)
 
             next_state, reward, done, _ = env.step(action)
             next_state = frame_stack.push_get(process_frame(next_state))
@@ -231,10 +227,11 @@ def train():
             memory.push(state, action, reward, next_state, done)
             state = next_state
 
-            loss = learn(dqn, target_dqn, memory, criterion, optimizer)
+            if total_steps % update_frequency == 0:
+                loss = learn(dqn, target_dqn, memory, criterion, optimizer)
+                losses.append(loss.item())
 
             if done:
-
                 speed = (total_steps - ts_frame) / (time.time() - ts)
                 ts_frame = total_steps
                 ts = time.time()
@@ -244,14 +241,16 @@ def train():
                 print('Episode: {}'.format(episode),
                       'Total reward: {}'.format(episode_rewards),
                       'Explore P: {:.4f}'.format(explore_probability),
-                      'Training Loss {}'.format(loss),
+                      'Training Loss {}'.format(np.mean(losses)),
                       'total steps {}'.format(total_steps),
                       'speed {} frames/sec'.format(speed))
 
             if total_steps % target_net_update_freq == 0:
                 target_dqn.load_state_dict(dqn.state_dict())
 
-        if episode % 10 == 0:
+            total_steps += 1
+
+        if episode % 100 == 0:
             torch.save(dqn.state_dict(), MODEL_PATH)
 
 
@@ -259,7 +258,7 @@ def play():
     dqn = DQN(state_shape=PROCESSED_FRAME_SIZE,
               n_actions=env.action_space.n)
 
-    dqn.load_state_dict(torch.load('models/breakout_working.pt', map_location=torch.device('cpu')))
+    dqn.load_state_dict(torch.load('models/breakout.pt', map_location=torch.device('cpu')))
     frame_stack = StackedFrames(4, PROCESSED_FRAME_SIZE)
     explorer = Explorer(0, 0, 0)
     for episode in range(500000):
@@ -268,11 +267,12 @@ def play():
         done = False
         episode_score = 0
         while not done:
-            time.sleep(0.04)
-            action, explore_probability = predict_action(dqn,
-                                                         explorer,
-                                                         state,
-                                                         env.action_space.n)
+            time.sleep(0.02)
+
+            with torch.no_grad():
+                qs = dqn(state.to(device))
+            action = torch.argmax(qs).item()
+
             next_state, reward, done, _ = env.step(action)
             next_state = frame_stack.push_get(process_frame(next_state))
             episode_score += reward
@@ -293,7 +293,7 @@ def display_processd_frame():
 
 def main():
     train()
-    # play()
+    #play()
     # display_processd_frame()
 
 
