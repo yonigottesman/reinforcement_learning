@@ -2,7 +2,31 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-class LinearExplorer():
+class ExpExplorer:
+    def __init__(self, explore_rate_start, explore_rate_stop, decay):
+        self.explore_rate_start = explore_rate_start
+        self.explore_rate_stop = explore_rate_stop
+        self.decay = decay
+        self.decay_step = 0
+
+    def explore(self):
+
+        exp_exp_trade_off = np.random.rand()
+        explore_probability = self.explore_prob()
+        self.decay_step += 1
+        if explore_probability > exp_exp_trade_off:
+            return True
+        else:
+            return False
+
+    def explore_prob(self):
+        explore_probability = self.explore_rate_stop + (
+                self.explore_rate_start - self.explore_rate_stop) * np.exp(
+            -self.decay * self.decay_step)
+        return max(self.explore_rate_stop, explore_probability)
+
+
+class LinearExplorer:
     def __init__(self, start_e=1, end_e=0.1, steps=1000000, end2_e=0.01, steps2=2000000):
         self.end2 = end2_e
         self.steps = steps

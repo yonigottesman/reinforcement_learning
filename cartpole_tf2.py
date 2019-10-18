@@ -5,8 +5,8 @@ import numpy as np
 import tensorflow as tf
 import gym
 
-from Explorer import Explorer
-from memory import fill_memory, ReplayMemory, Experience
+from common.explorers import ExpExplorer
+from common.memory import fill_memory, ReplayMemory
 
 env = gym.make('CartPole-v1')
 PATH = 'models/cartpole.h5'
@@ -81,7 +81,7 @@ def learn(model, memory):
 def train():
     memory = ReplayMemory(memory_size)
     fill_memory(memory, env, batch_size)
-    explorer = Explorer(explore_start, explore_stop, decay_rate)
+    explorer = ExpExplorer(explore_start, explore_stop, decay_rate)
     dqn = DQN(state_shape=env.observation_space.shape,
               n_actions=(env.action_space.n), lr=lr)
     dqn.model.summary()

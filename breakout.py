@@ -8,11 +8,10 @@ import torch
 import gym
 import torch.nn.functional as F
 
-from Explorer import Explorer
-from LinearExplorer import LinearExplorer
-from StackedFrames import StackedFrames
-import gym_wrappers
-from memory import ReplayMemory, fill_memory
+from common.explorers import LinearExplorer
+from common.framestack import FrameStack
+from common import gym_wrappers
+from common.memory import ReplayMemory
 from skimage import transform
 import matplotlib.pyplot as plt
 
@@ -135,8 +134,10 @@ def learn(dqn, target_dqn, memory, criterion, optimizer):
         # calculate next actions:
         next_state_actions = dqn(next_states[dones == False]).argmax(dim=1)
         # calculate qvalues using target_dqn
-        next_state_qs = target_dqn(next_states[dones == False]).gather(1, next_state_actions.unsqueeze(1)).squeeze().to(
-            device)
+        next_state_qs = (target_dqn(next_states[dones == False])
+                         .gather(1, next_state_actions.unsqueeze(1))
+                         .squeeze()
+                         .to(device))
 
     q_expected = rewards
     q_expected[dones == False] += gamma * next_state_qs
@@ -167,7 +168,7 @@ def predict_action(dqn, explorer, state, n_actions, steps):
 
 
 def fill_memory(memory):
-    frame_stack = StackedFrames(4, PROCESSED_FRAME_SIZE)
+    frame_stack = FrameStack(4, PROCESSED_FRAME_SIZE)
 
     state = env.reset()
     state = frame_stack.push_get(process_frame(state), True)
@@ -197,7 +198,7 @@ def train():
     criterion = torch.nn.SmoothL1Loss().to(device)
     optimizer = torch.optim.Adam(dqn.parameters(), lr=lr)
 
-    frame_stack = StackedFrames(4, PROCESSED_FRAME_SIZE)
+    frame_stack = FrameStack(4, PROCESSED_FRAME_SIZE)
     rewards_list = []
     total_steps = 0
 
@@ -259,15 +260,14 @@ def play():
               n_actions=env.action_space.n)
 
     dqn.load_state_dict(torch.load('models/breakout.pt', map_location=torch.device('cpu')))
-    frame_stack = StackedFrames(4, PROCESSED_FRAME_SIZE)
-    explorer = Explorer(0, 0, 0)
+    frame_stack = FrameStack(4, PROCESSED_FRAME_SIZE)
     for episode in range(500000):
         state = env.reset()
         state = frame_stack.push_get(process_frame(state), True)
         done = False
         episode_score = 0
         while not done:
-            time.sleep(0.02)
+            time.sleep(0.01)
 
             with torch.no_grad():
                 qs = dqn(state.to(device))
@@ -292,8 +292,8 @@ def display_processd_frame():
 
 
 def main():
-    train()
-    #play()
+    # train()
+    play()
     # display_processd_frame()
 
 

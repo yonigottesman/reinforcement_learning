@@ -6,8 +6,8 @@ import torch.nn as nn
 import torch
 import gym
 import torch.nn.functional as F
-from Explorer import Explorer
-from memory import ReplayMemory, fill_memory, Experience
+from common.explorers import ExpExplorer
+from common.memory import ReplayMemory, fill_memory
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 env = gym.make('CartPole-v1')
@@ -86,7 +86,7 @@ def predict_action(dqn, explorer, state, n_actions):
 def train():
     memory = ReplayMemory(memory_size)
     fill_memory(memory, env, batch_size)
-    explorer = Explorer(explore_start, explore_stop, decay_rate)
+    explorer = ExpExplorer(explore_start, explore_stop, decay_rate)
     dqn = DQN(state_shape=env.observation_space.shape[0],
               n_actions=env.action_space.n).to(device)
 
@@ -128,9 +128,9 @@ def train():
 def play():
     dqn = DQN(state_shape=env.observation_space.shape[0],
               n_actions=env.action_space.n)
-    #dqn.load_state_dict(torch.load(MODEL_PATH))
+    # dqn.load_state_dict(torch.load(MODEL_PATH))
 
-    for episode in range(5000):
+    while True:
         state = env.reset()
         done = False
         episode_score = 0
@@ -139,6 +139,11 @@ def play():
                 qs = dqn(torch.from_numpy(state).float())
             action = torch.argmax(qs).item()
             next_state, reward, done, _ = env.step(action)
+            if done:
+
+                for i in range(100):
+                    env.render()
+                    env.step(random.randint(0, env.action_space.n - 1))
             episode_score += reward
             env.render()
             state = next_state
@@ -147,8 +152,8 @@ def play():
 
 
 def main():
-    train()
-    #play()
+    #train()
+    play()
 
 
 if __name__ == '__main__':

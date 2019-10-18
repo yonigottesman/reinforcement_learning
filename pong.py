@@ -1,6 +1,7 @@
 import os
 import random
 import time
+from collections import deque
 
 import numpy as np
 import torch.nn as nn
@@ -8,25 +9,27 @@ import torch
 import gym
 import torch.nn.functional as F
 
-from Explorer import Explorer
-from LinearExplorer import LinearExplorer
-from StackedFrames import StackedFrames
-from memory import ReplayMemory, fill_memory
+from common.explorers import LinearExplorer
+from common.framestack import FrameStack
+from common import gym_wrappers
+from common.memory import ReplayMemory
 from skimage import transform
-from datetime import datetime
 import matplotlib.pyplot as plt
-from gym_wrappers import NoopResetEnv
-
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#env = gym.make('Pong-v0')
-#env = gym.make('Pong-v4')
-env = gym.make('PongDeterministic-v4')
-env = NoopResetEnv(env)
-#env.unwrapped.get_action_meanings()
+print('device: {}'.format(device))
+
+env = gym.make('PongNoFrameskip-v0')
+env = gym_wrappers.MaxAndSkipEnv(env, skip=4)
+env = gym_wrappers.NoopResetEnv(env)
+
+env = gym_wrappers.EpisodicLifeEnv(env)
+
+# TODO - dont think i need this
+env = gym_wrappers.ClipRewardEnv(env)
+
 if not os.path.exists('models'):
     os.makedirs('models')
-
 
 MODEL_PATH = 'models/pong.pt'
 PROCESSED_FRAME_SIZE = [84, 84]
@@ -37,38 +40,64 @@ class DQN(nn.Module):
     # state_shape only hight and width
     def __init__(self, state_shape, n_actions):
         super().__init__()
-        self.conv1 = nn.Conv2d(4, 16, kernel_size=8, stride=4)
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=4, stride=2)
+        self.conv1 = nn.Conv2d(4, 32, kernel_size=8, stride=4)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=2)
 
-        flatten_size = DQN.conv_size_out(np.array(state_shape), 8, 4)
-        flatten_size = DQN.conv_size_out(flatten_size, 4, 2)
-        flatten_size = flatten_size.prod()*32  # n output channels
-        self.fc1 = nn.Linear(flatten_size, 256)
-        self.fc2 = nn.Linear(256, n_actions)
+        flatten_size = self.calc_flatten_size(state_shape)
 
+        # Dueling network
+        self.v_fc = nn.Linear(flatten_size, 512)
+        self.v_stream = nn.Linear(512, 1)
+
+        self.advantage_fc = nn.Linear(flatten_size, 512)
+        self.advantage_stream = nn.Linear(512, n_actions)
+
+        self.init_layers()
+
+    def init_layers(self):
         torch.nn.init.xavier_uniform_(self.conv1.weight)
-        torch.nn.init.xavier_uniform_(self.conv1.weight)
+        torch.nn.init.xavier_uniform_(self.conv2.weight)
+        torch.nn.init.xavier_uniform_(self.conv3.weight)
 
-        torch.nn.init.xavier_uniform_(self.fc1.weight)
-        torch.nn.init.xavier_uniform_(self.fc2.weight)
+        torch.nn.init.xavier_uniform_(self.v_fc.weight)
+        torch.nn.init.xavier_uniform_(self.v_stream.weight)
+        torch.nn.init.xavier_uniform_(self.advantage_fc.weight)
+        torch.nn.init.xavier_uniform_(self.advantage_stream.weight)
+
+    def calc_flatten_size(self, state_shape):
+        flatten_size = DQN.conv_size_out(np.array(state_shape), self.conv1.kernel_size, self.conv1.stride)
+        flatten_size = DQN.conv_size_out(flatten_size, self.conv2.kernel_size, self.conv2.stride)
+        flatten_size = DQN.conv_size_out(flatten_size, self.conv3.kernel_size, self.conv3.stride)
+        flatten_size = flatten_size.prod() * self.conv3.out_channels
+        return flatten_size
 
     @staticmethod
     def conv_size_out(input_size, kernel_size, stride, padding=0):
-        return (input_size + 2*padding - kernel_size)//stride + 1
+        return (input_size + 2 * padding - kernel_size) // stride + 1
 
     @staticmethod
     def flatten(x):
         return x.view(x.size(0), -1)
 
     def forward(self, state):
-
         normalized = state.float() / 255
         a2 = F.relu(self.conv1(normalized))
         a3 = F.relu(self.conv2(a2))
-        a4 = F.relu(self.fc1(DQN.flatten(a3)))
-        output = self.fc2(a4)
+        a4 = F.relu(self.conv3(a3))
 
-        return output
+        a4_flat = DQN.flatten(a4)
+
+        # Dueling
+        a5_v = F.relu(self.v_fc(a4_flat))
+        value = self.v_stream(a5_v)
+
+        a5_a = F.relu(self.advantage_fc(a4_flat))
+        advantage = self.advantage_stream(a5_a)
+
+        q = value + (advantage - advantage.mean(dim=1, keepdim=True))
+
+        return q
 
 
 def process_frame(frame):
@@ -82,14 +111,16 @@ def process_frame(frame):
 
 # training hyperparams
 memory_size = 50000
-prefill_memory = 50000
+prefill_memory = 100
 batch_size = 32
-lr = 1e-4
+lr = 0.00001
 gamma = 0.99  # Discounting rate
+target_net_update_freq = 10000
+episodes_train = 1000000
+update_frequency = 4
 
 
-def learn(dqn, memory, criterion, optimizer):
-    a = datetime.now()
+def learn(dqn, target_dqn, memory, criterion, optimizer):
 
     batch = memory.sample(batch_size)
 
@@ -97,16 +128,21 @@ def learn(dqn, memory, criterion, optimizer):
     states = torch.cat(batch.state).to(device)
     actions = torch.tensor(batch.action).view(-1, 1).to(device)
     next_states = torch.cat(batch.next_state).to(device)
-
-
     dones = torch.tensor(batch.done).to(device)
 
     with torch.no_grad():
-        next_state_qs = dqn(next_states[dones == False]).to(device)
+        # double dqn: to get q_values of next_state, get the actions from
+        # dqn and use to get qvalues for those actions using target_dqn
+        # calculate next actions:
+        next_state_actions = dqn(next_states[dones == False]).argmax(dim=1)
+        # calculate qvalues using target_dqn
+        next_state_qs = (target_dqn(next_states[dones == False])
+                         .gather(1, next_state_actions.unsqueeze(1))
+                         .squeeze()
+                         .to(device))
 
     q_expected = rewards
-    q_expected[dones == False] += \
-        gamma * torch.max(next_state_qs, dim=1).values
+    q_expected[dones == False] += gamma * next_state_qs
 
     # get q values only of played moves
     q_predicted = dqn(states).gather(1, actions).squeeze().to(device)
@@ -115,16 +151,13 @@ def learn(dqn, memory, criterion, optimizer):
 
     optimizer.zero_grad()
     loss.backward()
-    b = datetime.now()
-    optimizer.step()
 
-    delta = b - a
-    print(delta.total_seconds()*1000) # total milisec
+    optimizer.step()
     return loss
 
 
-def predict_action(dqn, explorer, state, n_actions):
-    if explorer.explore():
+def predict_action(dqn, explorer, state, n_actions, steps):
+    if explorer.should_explore(steps):
         # exploration
         action = random.randint(0, n_actions - 1)
     else:
@@ -133,19 +166,16 @@ def predict_action(dqn, explorer, state, n_actions):
             qs = dqn(state.to(device))
         action = torch.argmax(qs).item()
 
-    return action, explorer.explore_prob()
+    return action, explorer.explore_prob(steps)
 
 
 def fill_memory(memory):
-    frame_stack = StackedFrames(4, PROCESSED_FRAME_SIZE)
+    frame_stack = FrameStack(4, PROCESSED_FRAME_SIZE)
 
     state = env.reset()
     state = frame_stack.push_get(process_frame(state), True)
 
-    # same number as paper
     for i in range(prefill_memory):
-        if i % 1000 == 0:
-            print(i)
         action = random.randint(0, env.action_space.n - 1)
         next_state, reward, done, _ = env.step(action)
         next_state = frame_stack.push_get(process_frame(next_state))
@@ -161,51 +191,70 @@ def train():
     memory = ReplayMemory(memory_size)
     fill_memory(memory)
     print('finished filling memory')
-    explorer = Explorer(1, 0.02, 1e-05)
-    dqn = DQN(state_shape=PROCESSED_FRAME_SIZE, n_actions=env.action_space.n)\
-        .to(device)
+    explorer = LinearExplorer(1, 0.1, 1000000, 0.01, 24000000)
+    dqn = DQN(state_shape=PROCESSED_FRAME_SIZE,
+              n_actions=env.action_space.n).to(device)
+    target_dqn = DQN(state_shape=PROCESSED_FRAME_SIZE,
+                     n_actions=env.action_space.n).to(device)
 
-    criterion = torch.nn.MSELoss().to(device)
+    criterion = torch.nn.SmoothL1Loss().to(device)
     optimizer = torch.optim.Adam(dqn.parameters(), lr=lr)
 
-    frame_stack = StackedFrames(4, PROCESSED_FRAME_SIZE)
-    rewards_list = []
+    frame_stack = FrameStack(4, PROCESSED_FRAME_SIZE)
+    latest_rewards = deque([], maxlen=100)
     total_steps = 0
-    for episode in range(5000):
+
+    ts_frame = 0
+    ts = time.time()
+
+    for episode in range(episodes_train):
+
         episode_rewards = 0
+        losses = []
         state = env.reset()
         state = frame_stack.push_get(process_frame(state), True)
         done = False
-        while not done: # 34829[msec]
-            a = datetime.now()
-            total_steps += 1
+
+        while not done:
             action, explore_probability = predict_action(dqn,
                                                          explorer,
                                                          state,
-                                                         env.action_space.n)
+                                                         env.action_space.n,
+                                                         total_steps)
 
             next_state, reward, done, _ = env.step(action)
             next_state = frame_stack.push_get(process_frame(next_state))
 
-            #env.render()
+            # env.render()
             episode_rewards += reward
             memory.push(state, action, reward, next_state, done)
             state = next_state
 
-            loss = learn(dqn, memory, criterion, optimizer)
-            b = datetime.now()
-            delta = b - a
-            #print(delta.total_seconds()*1000000) # total milisec
+            if total_steps % update_frequency == 0:
+                loss = learn(dqn, target_dqn, memory, criterion, optimizer)
+                losses.append(loss.item())
+
             if done:
-                rewards_list.append(episode_rewards)
+                speed = (total_steps - ts_frame) / (time.time() - ts)
+                ts_frame = total_steps
+                ts = time.time()
+
+                latest_rewards.append(episode_rewards)
 
                 print('Episode: {}'.format(episode),
-                      'Total reward: {}'.format(episode_rewards),
-                      'Explore P: {:.4f}'.format(explore_probability),
-                      'Training Loss {}'.format(loss),
-                      'total steps {}'.format(total_steps))
+                      'reward: {}'.format(episode_rewards),
+                      'explore P: {:.4f}'.format(explore_probability),
+                      'loss: {:.4f}'.format(np.mean(losses)),
+                      'steps: {}'.format(total_steps),
+                      'speed: {:.1f} frames/sec'.format(speed),
+                      'average 100: {:.2f}'.format(np.mean(latest_rewards)))
 
-        if episode % 10 == 0:
+            if total_steps % target_net_update_freq == 0:
+                target_dqn.load_state_dict(dqn.state_dict())
+
+            total_steps += 1
+
+        if episode % 100 == 0:
             torch.save(dqn.state_dict(), MODEL_PATH)
 
 
@@ -213,20 +262,20 @@ def play():
     dqn = DQN(state_shape=PROCESSED_FRAME_SIZE,
               n_actions=env.action_space.n)
 
-    dqn.load_state_dict(torch.load('models/pong_working.pt',  map_location=torch.device('cpu')))
-    frame_stack = StackedFrames(4, PROCESSED_FRAME_SIZE)
-    explorer = Explorer(0, 0, 0)
-    for episode in range(5000):
+    dqn.load_state_dict(torch.load('models/breakout.pt', map_location=torch.device('cpu')))
+    frame_stack = FrameStack(4, PROCESSED_FRAME_SIZE)
+    for episode in range(500000):
         state = env.reset()
         state = frame_stack.push_get(process_frame(state), True)
         done = False
         episode_score = 0
         while not done:
             time.sleep(0.01)
-            action, explore_probability = predict_action(dqn,
-                                                         explorer,
-                                                         state,
-                                                         env.action_space.n)
+
+            with torch.no_grad():
+                qs = dqn(state.to(device))
+            action = torch.argmax(qs).item()
+
             next_state, reward, done, _ = env.step(action)
             next_state = frame_stack.push_get(process_frame(next_state))
             episode_score += reward
@@ -237,27 +286,20 @@ def play():
 
 def display_processd_frame():
     env.reset()
-    observation, reward, done, _ = env.step(env.action_space.sample())
-    fig, ax = plt.subplots(1, 2)
-    ax[0].imshow(observation)
-    proc = process_frame(observation)
-    ax[1].imshow(proc)
+    fig, ax = plt.subplots(2, 2)
+    for i in range(2):
+        observation, reward, done, _ = env.step(env.action_space.sample())
+        ax[i, 0].imshow(observation)
+        proc = process_frame(observation)
+        ax[i, 1].imshow(proc)
     plt.show()
 
 
-def test_memory_size():
-    memory = ReplayMemory(memory_size)
-    fill_memory(memory)
-    print('finished filling memory')
-    while True:
-        time.sleep(0.2)
-
-
 def main():
-    #train()
-    play()
+    train()
+    #play()
     #display_processd_frame()
-    #test_memory_size()
+
 
 if __name__ == '__main__':
     main()
